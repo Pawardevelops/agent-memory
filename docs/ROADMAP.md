@@ -1,6 +1,24 @@
-# agent-memory build roadmap
+---
+title: "agent-memory roadmap"
+owner: Tech Lead
+status: active
+applies_to: all-phases
+last_reviewed: 2026-10-10
+---
+
+# agent-memory roadmap
 
 This project uses the GitHub repo and PRs as the source of truth. Linear is intentionally not required for this build.
+
+## Phase map
+```mermaid
+flowchart TD
+  P0[Phase 0<br/>Spike and de-risk] --> P1[Phase 1<br/>Core memory without embeddings]
+  P1 --> P2[Phase 2<br/>Inference quality]
+  P2 --> P3[Phase 3<br/>Cache and operations]
+  P3 --> P4[Phase 4<br/>Integrations and rollout]
+  P4 --> Later[Later<br/>additional clients and UI if requested]
+```
 
 ## Phase 0: spike and de-risk
 Goal: prove the local stack before building product behaviour.
@@ -15,6 +33,9 @@ Scope:
 Exit criteria:
 - A short `docs/SPIKE_RESULTS.md` with commands run, results, risks and chosen fallback.
 - No production daemon behaviour required yet.
+
+Review gate:
+- Tech Lead confirms the chosen fallback for any failed spike.
 
 ## Phase 1: core memory without embeddings
 Goal: make the correctness model solid using SQLite and FTS only.
@@ -34,6 +55,11 @@ Exit criteria:
 - Unit tests cover provenance, attribution, versioning, recall, forget, secret filtering, token revocation and cross-transport parity.
 - Forgotten content is absent from active rows and FTS.
 
+Review gate:
+- Code Reviewer checks server boundaries and invariants.
+- Test Engineer checks lifecycle and deletion test coverage.
+- Security Reviewer checks token handling, logs and local file permissions.
+
 ## Phase 2: inference quality
 Goal: improve recall quality and make regressions measurable.
 
@@ -49,6 +75,10 @@ Scope:
 Exit criteria:
 - Hybrid recall improves paraphrase evals without increasing false positives.
 - Forgotten and superseded content never appears in active recall or eval output.
+
+Review gate:
+- Tech Lead checks retrieval metrics and confidence behaviour.
+- Test Engineer checks eval fixtures and regression gates.
 
 ## Phase 3: cache and operations
 Goal: make the daemon fast and usable day to day.
@@ -66,6 +96,10 @@ Exit criteria:
 - Writes invalidate result and brief caches.
 - Forget deletes active content from caches.
 
+Review gate:
+- Security Reviewer checks that caches do not weaken forget semantics.
+- Release Engineer checks backup and restore behaviour before local install.
+
 ## Phase 4: integrations and rollout
 Goal: connect the first clients and install safely on Sachin's Mac.
 
@@ -82,7 +116,18 @@ Exit criteria:
 - Claude Code can revise it as attested.
 - A forget of the current version restores the previous version.
 
+Review gate:
+- Release Engineer owns installation and rollback notes.
+- Security Reviewer validates verified provenance and token storage.
+
 ## Later
 - Cursor, Claude Desktop and VS Code presets.
 - UI for browse/edit if requested.
 - Remote/cloud-agent access only with a separate secure-tunnel and OAuth design.
+
+## PR rules
+- Work from `docs/project-docs` for documentation coordination.
+- Implementation work should use feature branches from the approved documentation state.
+- Commit identity must be `Pawardevelops <pawardevelops@gmail.com>`.
+- Use the `github-work` remote only.
+- PRs should name the phase, list acceptance criteria, include test evidence and note security/release impact.
