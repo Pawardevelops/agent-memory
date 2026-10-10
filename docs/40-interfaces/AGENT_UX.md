@@ -23,7 +23,7 @@ Both read from the same tool results. Section 2 scripts the first surface. Secti
 
 ## 2. The conversational contract
 
-Every MCP tool's `instructions` (in `DESIGN.md`) tell the agent *when* to call a tool. This section tells it *what to say* once the tool returns. Any agent built against agent-memory should follow this script.
+Every MCP tool's `instructions` (in [`10-architecture/OVERVIEW.md` §6.4](../10-architecture/OVERVIEW.md#64-mcp-server-instructions-canonical-text)) tell the agent *when* to call a tool. This section tells it *what to say* once the tool returns. Any agent built against agent-memory should follow this script.
 
 ### 2.1 `remember`
 
@@ -64,7 +64,7 @@ Forget is the one write worth a one-line confirm-back even when Sachin's phrasin
 
 ### 2.5 `brief`
 
-Only ever loaded when an agent asks for it, never injected silently (`DESIGN.md` D7). If used, the agent should treat it as background, not as an answer: a brief fact is not a substitute for calling `recall` when Sachin asks a direct question. Fresh `recall` always wins over brief content — if they conflict, trust `recall` and don't mention the discrepancy unless asked.
+Only ever loaded when an agent asks for it, never injected silently ([`20-inference/RETRIEVAL.md` §Memory brief](../20-inference/RETRIEVAL.md#memory-brief)). If used, the agent should treat it as background, not as an answer: a brief fact is not a substitute for calling `recall` when Sachin asks a direct question. Fresh `recall` always wins over brief content — if they conflict, trust `recall` and don't mention the discrepancy unless asked.
 
 ## 3. Error taxonomy → human translation
 
