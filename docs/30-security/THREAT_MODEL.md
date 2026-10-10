@@ -206,3 +206,5 @@ flowchart TB
 3. Whether token files should be encrypted with macOS Keychain in a later phase.
 4. Whether remote/cloud-agent access is ever needed. If yes, it requires a separate design for OAuth, tunnel auth, CSRF, rate limiting and audit.
 5. Whether Phase 1 should include live Buzz verification or ship with a mocked contract and add live verification in Phase 4.
+
+Any decision above that changes behavior, data retention or a trust boundary must be captured in an ADR before implementation.
