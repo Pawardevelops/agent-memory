@@ -26,7 +26,7 @@ agent-memory is shared, local, long-term memory for any AI agent on Sachin's Mac
 | Technology | [50-tech/STACK_AND_SKILLS.md](50-tech/STACK_AND_SKILLS.md) | Tech Lead | Each technology, why we chose it, and the skills needed |
 | Process | [60-process/WORKFLOW.md](60-process/WORKFLOW.md) | Engineering Guide | Phases, PR flow, review gates |
 | Plan | [ROADMAP.md](ROADMAP.md) | Tech Lead | Phase scope and exit criteria |
-| Legacy | [DESIGN.md](DESIGN.md) | Architect | The v1–v3 single-file spec. **It stays authoritative until each topic has moved into the files above.** After that it becomes a pointer |
+| Legacy | [DESIGN.md](DESIGN.md) | Architect | A pointer only. The v1–v3 single-file spec has been split into the files above, and the full text is in git history at `434aa4b` |
 
 ## How these docs change over time
 

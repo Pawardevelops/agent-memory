@@ -209,5 +209,80 @@ flowchart LR
 | Backups, export, reembed | | | ✅ | |
 | Client presets and snippets | | | | ✅ |
 
-## 6. Decisions
+## 6. Target details not yet in a phase snapshot
+
+These parts arrive in Phases 3–4. Each one moves into `phase-3/` or `phase-4/ARCHITECTURE.md` when that phase is built. Until then, this section is the reference. It was migrated from DESIGN.md v3.
+
+### 6.1 Cache layer (Phase 3, ADR 0005)
+
+| Layer | What | Where | Invalidation |
+|---|---|---|---|
+| C0 Model warm | Embed model kept loaded (`keep_alive: -1`), warm-up at daemon start | Ollama | n/a |
+| C1 Query-embedding LRU | `hash(model, normalized query)` → vector, 2,000 entries | daemon memory | model change |
+| C2 Embedding cache | `hash(model, text)` → vector for content and queries, survives restarts | `embedding_cache` table, pruned to 50k rows / 30 days unused | model change; **content rows deleted on forget** |
+| C3 Recall results | `(query, filters, as_of, include_history, limit, max_chars, generation)` → results, 500 entries, TTL 10 min | daemon memory | any write bumps `write_generation` |
+| C4 Memory brief | Scoped summary ≤ 2 KB per project, **explicit `brief` call only** | memory, lazily rebuilt | generation change |
+| C5 SQLite | `cache_size=-65536`, `mmap_size=256MB`, `temp_store=MEMORY` | SQLite | automatic |
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant A as Agent
+  participant D as Daemon
+  participant C3 as C3 result cache
+  participant DB as SQLite
+  A->>D: recall("launch date")
+  D->>C3: get(key + gen 41)
+  C3-->>D: hit (v1 "1 Nov")
+  A->>D: forget(v1)
+  D->>DB: delete text, FTS, vec and C2 rows, gen = 42
+  A->>D: recall("launch date")
+  D->>C3: get(key + gen 42)
+  C3-->>D: miss
+  D->>DB: search → nothing current
+  D-->>A: confidence none
+```
+
+**Cache invariants** (each is a release-blocking test):
+1. Forget is total: nothing forgotten can come back from any layer.
+2. No stale read after a write is acknowledged: the generation is bumped in the commit path, before the response.
+3. Cache off (`AGENT_MEMORY_CACHE=off`) gives identical results.
+
+Metrics: hits and misses per layer, plus recall p50/p95, shown by `agent-memory stats`.
+
+### 6.2 Buzz sub-identity and verified provenance (Phase 4, ADR 0002/0003)
+- **One token, many agents:** all Buzz agents run on Claude Code through `claude-agent-acp` and share one MCP config, so a single token can't tell PA from Coder.
+- **How the shim identifies each agent:** it reads `BUZZ_ACP_DISPLAY_NAME` and `BUZZ_PRIVATE_KEY` from its environment and sends `X-Agent-Sub`. That header carries the display name, the pubkey, and a Schnorr signature over a nonce issued by the daemon. The daemon stores the result as `agent_sub` under the `buzz` agent.
+- **Verified provenance:** when a request includes `request.buzz{channel_id, event_id}`, the daemon fetches the event (`buzz messages thread --channel … --event …`). It then verifies the NIP-01 id and the Schnorr signature, and checks that `pubkey == OWNER_PUBKEY`. On success the provenance is `verified`. On failure it returns `not_requested_by_owner`, `bad_signature` or `event_not_found`, and nothing is written.
+
+### 6.3 Client registration and rollout (Phases 3–4)
+1. Install the prerequisites: `brew install ollama uv && ollama pull nomic-embed-text`. Then run `agent-memory install-launchd` (KeepAlive) and `agent-memory doctor`.
+2. Register each client with `agent-memory agent add <name> --client <preset> [--dry-run]`. The command shows a diff-style preview and then writes the config:
+
+   | Preset | Config it writes |
+   |---|---|
+   | claude-code | `claude mcp add -s user …` |
+   | codex | `~/.codex/config.toml [mcp_servers.agent-memory]` |
+   | cursor | `~/.cursor/mcp.json` |
+   | claude-desktop | `claude_desktop_config.json` |
+   | vscode | user `mcp.json` |
+
+   Go-live clients are Claude Code (which also covers the Buzz agents) and Codex.
+3. Add reinforcement snippets that mirror the server instructions to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.buzz/AGENTS.md` (below the managed markers).
+4. Set up nightly backups through launchd, keeping 14 days. Forgotten text survives in backups until it rotates out; see THREAT_MODEL.
+5. Run the live smoke test:
+   - PA (Buzz) remembers a fact, and it is stored as verified.
+   - Codex recalls it.
+   - Sachin revises it in Claude Code, which creates an attested v2.
+   - Sachin forgets the current version. v1 comes back, and the next recall is fresh, not a stale cache hit.
+
+### 6.4 MCP server instructions (canonical text)
+The daemon sends this text to every client when it connects. It tells the agent *when* to call each tool. [AGENT_UX](../40-interfaces/AGENT_UX.md) defines *what to say* afterwards.
+- Write only when the user explicitly asks you to remember or keep something in mind. Put the user's exact words in `request.quote`, and add `request.buzz` when the request came from Buzz.
+- Before answering questions about the user's past decisions or preferences, or facts they gave you, call `recall`.
+- When the user changes a saved conclusion, call `recall` first and then `revise`. Never create a duplicate.
+- For "forget…", identify the target with `recall` or `history`, call `forget`, then tell the user what is current now.
+- Cite the agent and date for every recalled fact, or say that nothing is saved. Never guess.
+
+## 7. Decisions
 See [adr/README.md](adr/README.md).

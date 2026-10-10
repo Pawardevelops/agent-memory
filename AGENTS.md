@@ -1,6 +1,6 @@
 # agent-memory
 
-Local memory daemon (MCP + REST) shared by any AI agent on Sachin's Mac. The spec is in `docs/DESIGN.md`; read it before changing anything.
+Local memory daemon (MCP + REST) shared by any AI agent on Sachin's Mac. Docs start at `docs/README.md`. Read `docs/10-architecture/phase-N/ARCHITECTURE.md` for the phase you're building, and the ADRs, before changing anything.
 
 ## Rules
 - Enforce invariants in the server and the schema, not in prompts: the write gate, one current version per topic, hard delete on forget, and no forgotten content in any cache layer.
