@@ -1,10 +1,11 @@
-# agent-memory: design and build spec (v2)
+# agent-memory: design and build spec (v3)
 
 Shared, local, long-term memory for **any AI agent** on Sachin's Mac: Claude Code, Codex, Buzz agents, Cursor, Claude Desktop, VS Code and custom scripts.
 
 Status: approved by Sachin (Buzz #osro platform, thread `16f5b1c8…`, 2026-10-09).
 - v1 covered Buzz agents only.
 - v2 opens it to any agent and adds the cache layer. Sachin accepted Architect's defaults for the open decisions.
+- v3 adds the inference-engineering contract: retrieval quality, context budgeting, confidence, evals and failure behaviour.
 
 ## Requirements (from Sachin)
 1. Every agent can read and write, and each memory records **which agent** wrote it. "Agent" means any AI client, not only Buzz.
@@ -27,6 +28,7 @@ Status: approved by Sachin (Buzz #osro platform, thread `16f5b1c8…`, 2026-10-0
 | D4 | First clients at go-live | Claude Code, Codex and Buzz agents (which run on Claude Code via claude-agent-acp). Cursor, Claude Desktop and VS Code come next |
 | D5 | Cache | In-process caches inside the daemon, with generation-based invalidation. No Redis or other external cache (see Cache layer) |
 | D6 | Network exposure | Bind to 127.0.0.1 only. Cloud agents (ChatGPT web, claude.ai) are out of scope and would need a tunnel plus OAuth later |
+| D7 | Inference contract | Recall returns ranked evidence and confidence signals; agents decide answers from cited evidence, not from memory text blindly injected into prompts |
 
 ## Architecture
 ```
@@ -148,6 +150,51 @@ At this scale (one user, up to tens of thousands of facts), SQLite reads take we
 
 Track the metrics `cache_hits` and `cache_misses` per layer, plus recall p50 and p95. `agent-memory stats` shows them.
 
+## Inference engineering contract
+This project is not only a storage system. It is an inference support layer for agents, so the server must make retrieval useful, bounded and auditable.
+
+### Retrieval quality
+- `recall` returns evidence, not final prose. Each result includes the text, topic/version metadata, provenance, source, agent attribution, rank signals and warnings.
+- Ranking is hybrid:
+  - Phase 1: FTS5 BM25 only.
+  - Phase 2: FTS5 top-k plus vector top-k, merged with reciprocal rank fusion.
+  - Duplicate or near-duplicate versions from the same topic are collapsed unless `include_history=true`.
+- The server must expose `score_debug` in development and tests: FTS rank, vector distance, final rank and whether the result came from cache. It is hidden by default in normal CLI output.
+- Recall returns `warnings` for degraded modes such as `embedder_unavailable`, `keyword_only`, `cache_disabled`, or `low_confidence`.
+
+### Confidence and answer policy
+- Recall should classify result quality as `high`, `medium`, `low` or `none`.
+- `none`: return an empty result set. The agent must say nothing is saved.
+- `low`: return candidates with `low_confidence`; the agent must phrase the answer as uncertain or ask for confirmation.
+- `medium`/`high`: the agent can answer, but must cite the memory by agent and date.
+- The server never lets C4 memory brief override a fresh `recall` result. Fresh recall is authoritative.
+
+### Context budgeting
+- `recall` accepts `max_chars?` and `max_results?`; defaults should fit normal agent tool-result budgets.
+- The server truncates long memories with a clear `truncated=true` marker and keeps IDs intact so agents can call `history` or `recall` again for detail.
+- `brief(project?)` is explicit and scoped. It is not automatically global context for every agent. Agents request it when they need session warm-up context.
+- The brief must include `generated_at`, `write_generation`, `project`, included topic IDs and a warning that it is a summary, not source evidence.
+
+### Write-time normalization
+- The server stores the exact `content` supplied by the agent, but also derives search fields:
+  - normalized title
+  - normalized tags
+  - optional summary for long content
+  - language hint when detectable
+- Normalization must be deterministic and local. Do not call a cloud model.
+- Do not transform or summarize away the original saved content. The original content is the source of truth until revised or forgotten.
+
+### Evaluation set
+The repo should include a small deterministic eval suite, separate from unit tests, so retrieval quality does not regress.
+- `tests/fixtures/memories.jsonl`: seed memories with topics, revisions, dates, tags and expected provenance.
+- `tests/fixtures/queries.jsonl`: query, expected topic IDs, expected absent topic IDs, `as_of` cases and confidence expectation.
+- `agent-memory eval`: loads an isolated temp DB, runs the query set, reports recall@k, MRR, false positives and degraded-mode behaviour.
+
+Initial eval gates:
+- Phase 1 FTS: pass exact and keyword-paraphrase cases; known semantic paraphrases may be marked expected failures.
+- Phase 2 hybrid: improve paraphrase cases without increasing false positives on forgotten/superseded content.
+- Forget/revise evals are release blockers: forgotten content must never appear in active recall, brief, FTS or vector results.
+
 ## Tools (MCP) and endpoints (REST)
 Each MCP tool has a matching REST endpoint at `/v1/<tool>` (POST JSON, bearer auth).
 
@@ -155,11 +202,11 @@ Each MCP tool has a matching REST endpoint at `/v1/<tool>` (POST JSON, bearer au
 |---|---|---|
 | `remember` | `content, title?, kind?, tags?, project?, request, force_new?` | Provenance check, then secret filter. Searches for similar current topics, and if any match (and `force_new` isn't set), returns `possible_duplicate` with candidates and writes nothing. Otherwise creates the topic and entry v1 as `current` |
 | `revise` | `topic_id, content, kind?, tags?, request` | One transaction: the current entry becomes `superseded`, and the new entry (`version = max+1`) becomes `current` |
-| `recall` | `query, project?, as_of?, include_history=false, limit=8` | Hybrid: FTS5 bm25 top-20 + vec KNN top-20, merged by RRF (k=60). The default returns `current` only. `as_of` returns the latest non-forgotten version per topic with `created_at <= as_of`. Each result carries `topic_id, entry_id, title, version, content, kind, tags, agent, agent_sub, provenance, created_at, conversation_id, buzz_event_id, status` |
+| `recall` | `query, project?, as_of?, include_history=false, limit=8, max_chars?` | Hybrid: FTS5 bm25 top-20 + vec KNN top-20, merged by RRF (k=60). The default returns `current` only. `as_of` returns the latest non-forgotten version per topic with `created_at <= as_of`. Each result carries `topic_id, entry_id, title, version, content, kind, tags, agent, agent_sub, provenance, created_at, conversation_id, buzz_event_id, status, rank, confidence, truncated` |
 | `forget` | exactly one of `entry_id`, `topic_id`, `conversation_id`, or `{since, agent?}`, plus `request` | For each target: set `content` and `request_quote` to NULL, delete the FTS, vec and C2 rows, set `status='forgotten'`, and bump the generation. If the target was current, promote the highest remaining superseded version, or mark the topic forgotten if none remain. Writes an audit row. Returns what was forgotten and what is current now |
 | `history` | `topic_id` | All versions. Forgotten ones appear as tombstones |
 | `list` | `project?, since?, agent?, limit=50` | Current topics, newest first |
-| `brief` | `project?` | C4 memory brief. Also exposed as the MCP resource `memory://brief` |
+| `brief` | `project?, max_chars=2000` | Explicit, scoped C4 memory brief. Also exposed as the MCP resource `memory://brief?project=...` |
 
 Errors use the shape `{error: code, message}`. Recall degrades to keyword-only with `warnings: ["embedder_unavailable"]`. Remember still succeeds and queues the embedding for backfill.
 
@@ -194,6 +241,9 @@ Errors use the shape `{error: code, message}`. Recall degrades to keyword-only w
 13. A revoked token → 401. A token never appears in logs.
 14. Ollama down → recall works keyword-only with a warning, and remember succeeds with the embedding backfilled later.
 15. The stdio shim and the HTTP and REST paths return identical results for the same calls.
+16. Recall confidence: unrelated queries return `confidence=none`; weak matches return `low` and a warning; strong exact matches return `high`.
+17. Context budget: `max_chars` truncates long results with `truncated=true` and keeps IDs, rank and provenance intact.
+18. Eval command: the fixture query set passes required recall@k/MRR gates and confirms forgotten/superseded content is absent from active recall and brief.
 
 ## Layout
 ```
@@ -202,6 +252,7 @@ src/agent_memory/
   shim.py        # stdio → HTTP forwarder
   core/          # store.py, versions.py, search.py, forget.py
   cache.py       # C1–C4, generation counter
+  evals.py       # deterministic retrieval eval harness
   provenance/    # buzz.py (event fetch + NIP-01 verify), attested.py
   identity.py    # tokens, registry, buzz sub-identity
   embed.py       # ollama client + C2
@@ -210,6 +261,7 @@ src/agent_memory/
   cli.py
 migrations/0001_init.sql
 tests/
+  fixtures/
 ```
 The dependencies are `mcp`, `starlette`, `uvicorn`, `httpx`, `sqlite-vec`, `coincurve`, `python-ulid` and `pytest`. The risk to check first is that Homebrew Python's `sqlite3` allows `enable_load_extension`. If it doesn't, use a `uv python` build or `pysqlite3`.
 
