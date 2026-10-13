@@ -10,6 +10,8 @@ last_reviewed: 2026-10-10
 
 agent-memory is shared, local, long-term memory for any AI agent on Sachin's Mac. Agents save a fact **only when Sachin explicitly asks** ("keep in mind…"). They can recall it later with a citation, revise it when he changes his mind, and forget it so that the previous version comes back.
 
+**New here? Read [GUIDE_END_TO_END.md](GUIDE_END_TO_END.md) first.** It explains the whole system in one place, with 40 diagrams. The files below are the detailed references.
+
 ## Map
 
 | Area | Document | Owner | What it answers |
